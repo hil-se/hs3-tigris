@@ -12,8 +12,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parent
 
 
-def load_config(path):
-    return tomllib.loads(Path(path).read_text())
+def load_config():
+    return tomllib.loads((ROOT / "config.toml").read_text())
 
 
 def digest(value):

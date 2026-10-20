@@ -11,4 +11,4 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 source cluster/tigris/env.sh
-HF_HUB_OFFLINE=0 python prepare.py --config "${CONFIG_PATH:-config.toml}" --output "${DATA_DIR:-data/llama33-hs3}"
+HF_HUB_OFFLINE=0 python prepare.py

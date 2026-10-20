@@ -1,6 +1,5 @@
 """Full-model Llama reward training with the HS3 paper's scaled BT loss."""
 
-import argparse
 from functools import partial
 import json
 import math
@@ -159,21 +158,8 @@ def save_checkpoint(model, path, tokenizer_path, rank, world_size):
         dist.barrier()
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config.toml")
-    parser.add_argument("--data", type=Path, default=Path("data/llama33-hs3"))
-    parser.add_argument(
-        "--output",
-        type=Path,
-        required=True,
-        help="Checkpoint directory on scratch/shared storage",
-    )
-    parser.add_argument(
-        "--results", type=Path, required=True, help="Small run records, usually in home"
-    )
-    args = parser.parse_args()
-    config, started = load_config(args.config), time.monotonic()
+def train(config, data_dir, checkpoint_dir, results_dir):
+    started = time.monotonic()
     rank, world_size = (
         int(os.environ.get("RANK", 0)),
         int(os.environ.get("WORLD_SIZE", 1)),
@@ -187,33 +173,25 @@ def main():
         torch.cuda.set_device(device)
     if world_size > 1:
         dist.init_process_group("nccl" if device.type == "cuda" else "gloo")
-    if args.output.exists() or args.results.exists():
-        raise FileExistsError("Choose new --output and --results directories")
-    if world_size > 1:
-        dist.barrier()
     set_seed(config["seed"])
-    manifest = json.loads((args.data / "manifest.json").read_text())
-    train, validation = (
-        read_jsonl(args.data / "train.jsonl"),
-        read_jsonl(args.data / "validation.jsonl"),
+    manifest = json.loads((data_dir / "manifest.json").read_text())
+    train_rows, validation_rows = (
+        read_jsonl(data_dir / "train.jsonl"),
+        read_jsonl(data_dir / "validation.jsonl"),
     )
     spec = config["training"]
     batch, global_batch = spec["micro_batch_pairs"], spec["global_batch_pairs"]
-    if global_batch % (batch * world_size):
-        raise ValueError(
-            "global_batch_pairs must divide evenly across ranks and microbatches"
-        )
     accumulation = global_batch // (batch * world_size)
     train_sampler = DistributedSampler(
-        train, world_size, rank, seed=config["seed"], drop_last=True
+        train_rows, world_size, rank, seed=config["seed"], drop_last=True
     )
-    val_sampler = DistributedSampler(validation, world_size, rank, shuffle=False)
+    val_sampler = DistributedSampler(validation_rows, world_size, rank, shuffle=False)
     collator = partial(collate, pad_token_id=manifest["pad_token_id"])
     train_loader = DataLoader(
-        train, batch_size=batch, sampler=train_sampler, collate_fn=collator
+        train_rows, batch_size=batch, sampler=train_sampler, collate_fn=collator
     )
     val_loader = DataLoader(
-        validation, batch_size=batch, sampler=val_sampler, collate_fn=collator
+        validation_rows, batch_size=batch, sampler=val_sampler, collate_fn=collator
     )
     steps_per_epoch = math.ceil(len(train_loader) / accumulation)
     total_steps = steps_per_epoch * spec["epochs"]
@@ -221,7 +199,7 @@ def main():
         total_steps = min(total_steps, spec["max_steps"])
     run = None
     if rank == 0:
-        run = snapshot(args.results, config)
+        run = snapshot(results_dir, config)
         run.update(
             data_manifest=manifest,
             world_size=world_size,
@@ -229,7 +207,7 @@ def main():
             complete=False,
             checkpoint_format="FSDP model shards" if world_size > 1 else "Hugging Face",
         )
-        write_json(args.results / "run.json", run)
+        write_json(results_dir / "run.json", run)
     if world_size > 1:
         dist.barrier()
     model = build_model(
@@ -255,7 +233,7 @@ def main():
             (loss.mean() / group_size).backward()  # FSDP synchronizes each microbatch.
             if (microstep + 1) % accumulation and microstep + 1 != len(train_loader):
                 continue
-            warmup = min((step + 1) / max(spec["warmup_steps"], 1), 1.0)
+            warmup = min((step + 1) / spec["warmup_steps"], 1.0)
             for group in optimizer.param_groups:
                 group["lr"] = spec["learning_rate"] * warmup
             if isinstance(model, FSDP):
@@ -274,16 +252,16 @@ def main():
                 )
             if step % spec["eval_steps"] == 0 or step == total_steps:
                 metrics = evaluate(model, val_loader, device, world_size)
-                path = args.output / f"checkpoint-{step}"
-                save_checkpoint(model, path, args.data / "tokenizer", rank, world_size)
+                path = checkpoint_dir / f"checkpoint-{step}"
+                save_checkpoint(model, path, data_dir / "tokenizer", rank, world_size)
                 history.append(
                     dict(step=step, validation=metrics, checkpoint=str(path.resolve()))
                 )
                 if metrics["loss"] < best_loss:
                     best_loss, selected = metrics["loss"], history[-1]
                 if rank == 0:
-                    write_json(args.results / "history.json", history)
-                    write_json(args.results / "selected.json", selected)
+                    write_json(results_dir / "history.json", history)
+                    write_json(results_dir / "selected.json", selected)
                     print(f"validation={metrics}", flush=True)
             if step >= total_steps:
                 break
@@ -297,10 +275,16 @@ def main():
             selected_checkpoint=selected,
             seconds=time.monotonic() - started,
         )
-        write_json(args.results / "run.json", run)
+        write_json(results_dir / "run.json", run)
     if world_size > 1:
         dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    main()
+    job = f"job-{os.environ['SLURM_JOB_ID']}"
+    train(
+        load_config(),
+        Path("data/llama33-hs3"),
+        Path(f"/scratch/{os.environ['USER']}/hs3-tigris/checkpoints") / job,
+        Path("results") / job,
+    )

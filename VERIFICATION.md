@@ -1,5 +1,16 @@
 # Validation of the Llama BT trainer
 
+## Current check: 2026-10-20 UTC
+
+- Removed command-line options and custom path/batch error checks. Both launchers
+  use `config.toml` and fixed data paths; training outputs use the Slurm job ID.
+- Both focused tests pass. `python tests/smoke.py` directly completed four CPU
+  updates, validation on three pairs, and model saving.
+- Bash syntax checks and TIGRIS `sbatch --test-only` accepted both launchers.
+  These were scheduler dry runs; no training job was submitted.
+
+## Earlier validation
+
 - Two focused tests pass: HS3 preference direction/strength, and the scaled-BT
   loss value and gradient.
 - A tiny random Llama completed four updates in one epoch, validation and model

@@ -54,9 +54,10 @@ sbatch -M tigris --account=YOUR_ACCOUNT --dependency=afterok:${prep%%;*} cluster
 ```
 
 The CPU preparation job downloads pinned model/data revisions and tokenizes pairs
-before GPUs are allocated. Training runs offline. Existing data or run outputs
-are not overwritten. To prepare another cohort, set `DATA_DIR` to a new directory
-before submitting both jobs. `HF_HOME` controls the download cache.
+before GPUs are allocated. Training runs offline. Both scripts take no command-line
+arguments: edit `config.toml` for model/data and training settings. Preparation
+writes to `data/llama33-hs3/`; running it again rewrites those prepared files.
+Each training job uses its Slurm job ID for its output directories.
 
 The launcher requests **16 GH200 GPUs**, one per node. FP32 master parameters
 and optimizer states are sharded; GPU computation uses BF16 and activation
@@ -83,7 +84,7 @@ tail -f slurm-hs3-llama70b-bt-JOB_ID.out
 
 With Python 3.11/3.12 and PyTorch installed, install `requirements.txt` and pytest,
 then run `python -m pytest -q`. Two tests check preference direction/strength and
-the scaled-BT equation. `python tests/smoke.py /tmp/hs3-smoke` creates a tiny random Llama
-and toy pairs for testing the same trainer without loading 70B weights.
+the scaled-BT equation. `python tests/smoke.py` runs the same trainer on a tiny
+random Llama and toy pairs, with outputs in a fresh temporary directory.
 
 See [VERIFICATION.md](VERIFICATION.md) for exactly what has been verified.

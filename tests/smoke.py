@@ -1,8 +1,9 @@
-"""Create a tiny random Llama and tokenized toy pairs for testing train.py."""
+"""Run the trainer with a tiny random Llama and toy preference pairs."""
 
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
@@ -13,8 +14,12 @@ from transformers import (
 )
 
 
-root = Path(sys.argv[1]).resolve()
-root.mkdir(parents=True)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common import load_config
+from train import train
+
+
+root = Path(tempfile.mkdtemp(prefix="hs3-smoke-"))
 model_path = root / "model"
 model = LlamaForSequenceClassification(
     LlamaConfig(
@@ -55,21 +60,10 @@ for split, count in [("train", 16), ("validation", 3)]:
 (data / "manifest.json").write_text(
     json.dumps({"pad_token_id": 0, "fixture": "random tiny Llama"})
 )
-(root / "config.toml").write_text(f'''seed = 1234
-[model]
-name = "{model_path}"
-revision = "local"
-[training]
-epochs = 1
-max_steps = -1
-global_batch_pairs = 4
-micro_batch_pairs = 1
-learning_rate = 0.001
-warmup_steps = 1
-weight_decay = 0.1
-beta1 = 0.9
-beta2 = 0.98
-max_grad_norm = 1.0
-eval_steps = 2
-''')
-print(root)
+config = load_config()
+config["model"] = dict(name=str(model_path), revision="local")
+config["training"].update(
+    global_batch_pairs=4, learning_rate=0.001, warmup_steps=1, eval_steps=2
+)
+train(config, data, root / "checkpoints", root / "results")
+print(f"Smoke-test files: {root}")
