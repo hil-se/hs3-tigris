@@ -3,7 +3,10 @@
 A small example for learning to run HelpSteer3 preference experiments on TIGRIS.
 It freezes **Qwen2.5-0.5B-Instruct**, embeds each chat/response, and fits two linear
 reward heads: unweighted Bradley–Terry and Comparative FairReweighing (CFR).
-One GH200 is enough. The encoder is never fine-tuned.
+The launcher requests one GH200. The encoder is never fine-tuned.
+
+See [VERIFICATION.md](VERIFICATION.md) for the checks performed and the remaining
+GPU validation boundary.
 
 Read the code in execution order:
 
