@@ -62,8 +62,9 @@ Each training job uses its Slurm job ID for its output directories.
 The launcher requests **16 GH200 GPUs**, one per node. FP32 master parameters
 and optimizer states are sharded; GPU computation uses BF16 and activation
 checkpointing. The 384 GiB host-memory request accommodates rank zero loading
-the full FP32 model before sharding. Socket NCCL avoids observed TIGRIS RDMA
-startup failures; its full-run performance still needs measurement.
+the full FP32 model before sharding. Inter-node NCCL communication requires the
+IB/RoCE RDMA transport (`NCCL_NET=IB`), with INFO logs for checking network
+initialization. `rctrust.571` remains the socket interface for NCCL bootstrap.
 
 Checkpoints go to `/scratch/$USER/hs3-tigris/checkpoints/job-JOB_ID/`. Each saved
 FP32 model is roughly 280 GB, so reserve several TB for a full epoch's snapshots.

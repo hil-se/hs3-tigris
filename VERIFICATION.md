@@ -1,6 +1,16 @@
 # Validation of the Llama BT trainer
 
-## Current check: 2026-10-20 UTC
+## Current check: 2026-10-20 02:47 UTC
+
+- The training launcher requires RDMA via `NCCL_NET=IB` and
+  `NCCL_IB_DISABLE=0`. INFO logs expose NCCL network initialization.
+- `rctrust.571` is retained for socket bootstrap, not the collective data transport.
+- Bash syntax and TIGRIS `sbatch --test-only` accepted the updated 16-GPU launcher.
+- No training job was submitted. Runtime RDMA operation remains unverified.
+
+## Earlier validation
+
+### Script simplification: 2026-10-20 UTC
 
 - Removed command-line options and custom path/batch error checks. Both launchers
   use `config.toml` and fixed data paths; training outputs use the Slurm job ID.
@@ -9,7 +19,7 @@
 - Bash syntax checks and TIGRIS `sbatch --test-only` accepted both launchers.
   These were scheduler dry runs; no training job was submitted.
 
-## Earlier validation
+### Initial Llama trainer
 
 - Two focused tests pass: HS3 preference direction/strength, and the scaled-BT
   loss value and gradient.

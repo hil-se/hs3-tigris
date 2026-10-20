@@ -17,9 +17,11 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 mapfile -t HOSTS < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
 export MASTER_ADDR="${HOSTS[0]}"
 export MASTER_PORT=$((29500 + SLURM_JOB_ID % 1000))
-# Socket transport avoids the cluster's observed RDMA initialization failures.
-export NCCL_IB_DISABLE=1
-export NCCL_NET=Socket
+# Require RDMA for inter-node NCCL traffic and log network initialization.
+export NCCL_IB_DISABLE=0
+export NCCL_NET=IB
+export NCCL_DEBUG=INFO
+# NCCL still uses sockets for bootstrap, before RDMA data transfers.
 export NCCL_SOCKET_IFNAME=rctrust.571
 srun --kill-on-bad-exit=1 bash -c '
   export RANK=$SLURM_PROCID WORLD_SIZE=$SLURM_NTASKS LOCAL_RANK=$SLURM_LOCALID
