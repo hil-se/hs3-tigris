@@ -1,21 +1,28 @@
-# Small teaching run. Increase the prompt limits after the first successful run.
-seed = 42
+# HelpSteer3 paper, English RM (General + STEM + Code), Appendix H / Table 8.
+seed = 1234
+
+[model]
+name = "meta-llama/Llama-3.3-70B-Instruct"
+revision = "6f6073b423013f6a7d4d9f39144961bfbfbc386b"
+template_model = "nvidia/Llama-3.3-Nemotron-70B-Reward"
+template_revision = "2500cf149ff7c481a9808111d21c0b2422e15c95"
+max_length = 4096
 
 [data]
 name = "nvidia/HelpSteer3"
 revision = "f6d145777bcbde96137596340fab89793acd1031"
-validation_fraction = 0.15
-train_prompts = 256
-validation_prompts = 64
-test_prompts = 64
-
-[model]
-name = "Qwen/Qwen2.5-0.5B-Instruct"
-revision = "7ae557604adf67be50417f59c2c2f167def9a775"
-max_length = 2048
-batch_size = 4
+domains = ["general", "stem", "code"]
 
 [training]
 epochs = 1
-batch_size = 32
-learning_rate = 0.01
+max_steps = -1
+# NeMo scaled-BT counts individual responses: 128 records = 64 pairs.
+global_batch_pairs = 64
+micro_batch_pairs = 1
+learning_rate = 0.000002
+warmup_steps = 10
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.98
+max_grad_norm = 1.0
+eval_steps = 50

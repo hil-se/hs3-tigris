@@ -1,119 +1,89 @@
-# HS3 on TIGRIS
+# Train Llama 3.3 70B on HelpSteer3
 
-A small example for learning to run HelpSteer3 preference experiments on TIGRIS.
-It freezes **Qwen2.5-0.5B-Instruct**, embeds each chat/response, and fits two linear
-reward heads: unweighted Bradley–Terry and Comparative FairReweighing (CFR).
-The launcher requests one GH200. The encoder is never fine-tuned.
+Full-model scalar reward training following the **English reward model** in the
+[HelpSteer3-Preference paper](https://arxiv.org/html/2505.11475v1#A8): General,
+STEM and Code. Read `prepare.py`, then `train.py`. Settings are in `config.toml`.
 
-See [VERIFICATION.md](VERIFICATION.md) for the checks performed and the remaining
-GPU validation boundary.
+The paper uses **scaled Bradley–Terry**:
 
-Read the code in execution order:
+```text
+loss = mean(abs(preference) * softplus(-(reward_chosen - reward_rejected)))
+```
 
-1. `prepare.py` downloads pinned data/model revisions and writes fixed splits.
-2. `embed.py` caches the last non-padding chat-token embedding for each response.
-3. `train.py` fits matched heads, selects by validation loss, and evaluates test.
-4. `common.py` contains the weighting equation and descriptive metrics.
+The backbone and scalar reward head both train. The head reads the last
+non-padding token. Inputs use the released NVIDIA reward model's chat template.
 
-## First TIGRIS run
+| Setting | Default |
+| --- | --- |
+| Base model | meta-llama/Llama-3.3-70B-Instruct |
+| Sequence limit | 4096 tokens |
+| Training duration | One epoch, max_steps=-1 |
+| Global batch | 128 response records = 64 preference pairs |
+| AdamW | LR 2e-6, betas (0.9, 0.98), weight decay 0.1 |
+| Schedule | 10 warm-up steps, then constant LR |
+| Validate and save | Every 50 steps, plus the final step |
+| Selection | Lowest validation scaled-BT loss; earlier checkpoint on ties |
 
-Use your own RIT login and Slurm project account. Your PI must have granted you
-TIGRIS access. Start from a clean clone:
+The learning rate is the paper's selected English-RM setting (Table 8).
+The implementation uses PyTorch FSDP; the paper used NeMo-Aligner. The official
+validation split stays validation, and overlapping training prompts are removed
+to prevent leakage. Raw repeated rows otherwise remain as released. Preference
+ties and overlength pairs are excluded; full chat context is preserved.
+These changes mean this is not a claim of identical paper scores. The paper's
+reported checkpoint was step 200; this run selects using its own validation loss.
+
+## Run on TIGRIS
+
+Your Hugging Face account needs access to the
+[Meta model](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct).
+Use your own RIT login and Slurm project account.
 
 ```bash
 ssh YOUR_RIT_USERNAME@tigris.rc.rit.edu
 git clone https://github.com/hil-se/hs3-tigris.git
 cd hs3-tigris
-
 source /.autofs/tools/spack/share/spack/setup-env.sh
 spack env activate default-ml-aarch64-25050701
 python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
-
 source cluster/tigris/env.sh
-HF_HUB_OFFLINE=0 python prepare.py
-sbatch --account=YOUR_SLURM_ACCOUNT cluster/tigris/run.slurm
+huggingface-cli login
+
+prep=$(sbatch -M tigris --parsable --account=YOUR_ACCOUNT cluster/tigris/prepare.slurm)
+sbatch -M tigris --account=YOUR_ACCOUNT --dependency=afterok:${prep%%;*} cluster/tigris/run.slurm
 ```
 
-The virtual environment reuses Spack's GPU-enabled PyTorch; do not install a
-replacement CPU PyTorch wheel on TIGRIS. Preparation downloads data and the
-encoder before requesting a GPU. The job runs offline from that cache.
+The CPU preparation job downloads pinned model/data revisions and tokenizes pairs
+before GPUs are allocated. Training runs offline. Existing data or run outputs
+are not overwritten. To prepare another cohort, set `DATA_DIR` to a new directory
+before submitting both jobs. `HF_HOME` controls the download cache.
+
+The launcher requests **16 GH200 GPUs**, one per node. FP32 master parameters
+and optimizer states are sharded; GPU computation uses BF16 and activation
+checkpointing. The 384 GiB host-memory request accommodates rank zero loading
+the full FP32 model before sharding. Socket NCCL avoids observed TIGRIS RDMA
+startup failures; its full-run performance still needs measurement.
+
+Checkpoints go to `/scratch/$USER/hs3-tigris/checkpoints/job-JOB_ID/`. Each saved
+FP32 model is roughly 280 GB, so reserve several TB for a full epoch's snapshots.
+These are distributed model-only checkpoints, without optimizer/RNG resume state.
+No checkpoints are pruned. Small records are in `results/job-JOB_ID/`:
+
+- `history.json`: validation loss/accuracy at each checkpoint.
+- `selected.json`: selected checkpoint path and step.
+- `run.json`: completion, actual final step, seed, pinned revisions and source snapshot.
 
 ```bash
 squeue -M tigris -u "$USER"
 sacct -M tigris -j JOB_ID --format=JobID,State,Elapsed,ExitCode
-tail -f slurm-hs3-prototype-JOB_ID.out
-cat results/job-JOB_ID/comparison.json
+tail -f slurm-hs3-llama70b-bt-JOB_ID.out
 ```
 
-The launch script requests one GH200, four CPU cores, 16 GB RAM, and 30 minutes.
-This is a resource request, not a runtime guarantee. It contains no node
-exclusions or placement constraints. Paths use your username:
+## Small code check
 
-- `data/`: prepared pairs, split audit and pinned configuration, in the clone.
-- `/scratch/$USER/hs3-tigris/`: model cache and per-job frozen features.
-- `results/job-JOB_ID/`: small head checkpoints, metrics, pair scores and source snapshots.
+With Python 3.11/3.12 and PyTorch installed, install `requirements.txt` and pytest,
+then run `python -m pytest -q`. Two tests check preference direction/strength and
+the scaled-BT equation. `python tests/smoke.py /tmp/hs3-smoke` creates a tiny random Llama
+and toy pairs for testing the same trainer without loading 70B weights.
 
-Set `ARTIFACT_ROOT` before submission to use another writable feature directory.
-Set `HF_HOME` before **both preparation and submission** to move the model cache.
-To change the cohort, edit `config.toml`, prepare into a new directory with
-`python prepare.py --output data-new`, then submit with `DATA_DIR=data-new`.
-Existing outputs are never overwritten or pruned automatically.
-
-## What the comparison means
-
-HS3 negative preferences favor Response 1; positive preferences favor Response 2.
-Here `Y=+1` means the left response wins. Preference ties and identical responses
-are omitted; preference strength is ignored for this binary BT example.
-Response order is canonicalized and conflicting duplicate labels are omitted.
-The non-multilingual domains include English code prompts.
-
-The official HS3 validation contexts are reserved for test, including contexts
-whose test pairs are later filtered. The remaining training contexts are split
-by prompt into train/development-validation before the prompt limits are applied.
-Full multi-turn context is preserved. Pairs exceeding `model.max_length` are
-excluded as whole pairs and recorded; responses are never silently truncated.
-
-Let `D = sign(tokens_left - tokens_right)`. CFR estimates
-`w(D,Y) = P(D) P(Y) / P(D,Y)` on **training pairs only**, counting their virtual
-reverses `(-D,-Y)` to remove arbitrary display position. Weights have mean one.
-Both heads use the same frozen features, train-only feature scaling, zero
-initialization, minibatch order, one full training epoch and no step cap.
-The selected head minimizes **unweighted validation BT loss**.
-
-`comparison.json` reports test preference accuracy and the accuracy difference
-between preferred-longer and preferred-shorter pairs. Lower absolute gap is
-better; higher accuracy is better. A gap is `null` if either group is absent.
-`run.json` records the actual final step, selected step, seed, revisions, config,
-versions and source hashes. `head.pt` stores the selected weights and scale;
-the training script reloads it before test evaluation.
-
-This small, single-seed demonstration does not reproduce the 70B HS3 paper or
-establish a mitigation benefit. It reports no significance tests. Final research
-comparisons need matched seeds and prompt-cluster inference. Pointwise CSEP is
-not computed because this example does not provide pointwise quality targets.
-
-## Local check
-
-Python 3.11 or 3.12:
-
-```bash
-uv venv --python 3.12
-uv pip install torch==2.6.0 -r requirements.txt pytest==8.3.5
-.venv/bin/python -m pytest -q
-```
-
-The three tests cover preference direction/duplicate disagreement, prompt
-separation, and the CFR equation. For an actual local run, use the same three
-scripts (`embed.py --device cpu`); reduce the prompt limits first.
-
-## Next student task: warmth
-
-Start by finding a published definition and measurement method for warmth.
-Validate a rubric with independent human ratings on a small pilot. Then examine
-whether reward preferences vary with warmth when quality and length are
-comparable. This repo computes no warmth labels or warmth-bias results.
-
-Sources: [HS3 dataset](https://huggingface.co/datasets/nvidia/HelpSteer3#preference),
-[Qwen model](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct),
-[RIT cluster documentation](https://research-computing.git-pages.rit.edu/docs/).
+See [VERIFICATION.md](VERIFICATION.md) for exactly what has been verified.

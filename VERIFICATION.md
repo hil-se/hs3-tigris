@@ -1,28 +1,26 @@
-# Initial validation
+# Validation of the Llama BT trainer
 
-Pipeline source: `20a48192b0bc7991e26e37cb0ff780919a5954bd`.
+- Two focused tests pass: HS3 preference direction/strength, and the scaled-BT
+  loss value and gradient.
+- A tiny random Llama completed four updates in one epoch, validation and model
+  saving on local CPU (PyTorch 2.6.0).
+- The same trainer completed four updates using **two FSDP processes** on CPU.
+  Validation correctly counted three original pairs despite sampler padding.
+- Both ordinary and distributed checkpoints were reloaded. Backbone attention
+  weights changed, confirming full-model training rather than head-only fitting.
+- TIGRIS CPU execution passed the same four-update training exercise with Python
+  3.11.7, PyTorch 2.1.1, Transformers 4.46.3 and Accelerate 1.2.1.
+- The pinned Llama 3.3 tokenizer is accessible on TIGRIS (128,256 vocabulary
+  entries). SentencePiece 0.2.1 fixes the inherited Spack binary's static-TLS
+  import conflict.
+- The full 80-layer architecture initializes on the meta device: 69,503,041,536
+  reward-model parameters. No large weight allocation was needed for this check.
+- Slurm dry runs accepted the production launcher: 16 GH200s, four CPU cores and
+  384 GiB host RAM per node, 24-hour limit. No full 70B training was submitted.
+- Real HS3 preparation passed CPU-only TIGRIS job **364545** (exit 0, 3m30s):
+  28,431 training pairs and 1,582 validation pairs. Their prompt IDs are disjoint;
+  preference strengths, sequence lengths, file hashes and NVIDIA template hash
+  were checked. Model weight downloading was skipped for this data check.
 
-- Three focused tests passed locally and again from a fresh GitHub clone.
-- A real HS3 CPU smoke run completed preparation, embedding and both treatments
-  with Python 3.12.12, PyTorch 2.6.0 and Transformers 4.46.3.
-- The smoke config selected 8/4/4 train/validation/test prompts and a 1,024-token
-  limit. After whole-pair length filtering, 7/2/3 pairs remained. Both heads
-  finished one epoch (one optimizer step), saved and reloaded their selected
-  checkpoint, and produced finite held-out loss on the same three test pairs.
-- Actual artifact prompt IDs were disjoint across train, validation and test.
-- Training from the fresh clone reproduced the local smoke outputs exactly.
-- TIGRIS setup/imports passed with Spack `default-ml-aarch64-25050701`, Python
-  3.11.7, PyTorch 2.1.1 and Transformers 4.46.3.
-- The default config prepared 264/65/66 pairs from 256/64/64 prompts on TIGRIS.
-- Source, configuration, requirements and launcher hashes match the local release.
-- Slurm accepted GPU job **364331** on cluster **tigris**, account **loop**:
-  one GH200, four CPU cores, 16 GB RAM, 30-minute limit. It was pending for
-  priority at this validation snapshot. GPU execution is not yet verified.
-- A 10-minute scheduler dry run did not improve the forecast; the submitted job
-  and its queue age were preserved.
-
-The CPU smoke metrics verify execution only. This single-seed, tiny-cohort run
-does not establish a fairness or accuracy benefit.
-
-Remote source copy: `/home/xx4455/hs3-tigris`. Once the GPU job finishes, inspect
-`results/job-364331/`, its completion manifests, Slurm accounting and error log.
+The tiny-model tests verify code paths, not 70B memory use, GPU throughput or
+the paper's benchmark results. Full-size GPU execution remains unverified.
