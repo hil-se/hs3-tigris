@@ -80,12 +80,3 @@ squeue -M tigris -u "$USER"
 sacct -M tigris -j JOB_ID --format=JobID,State,Elapsed,ExitCode
 tail -f slurm-hs3-llama70b-bt-JOB_ID.out
 ```
-
-## Small code check
-
-With Python 3.11/3.12 and PyTorch installed, install `requirements.txt` and pytest,
-then run `python -m pytest -q`. Two tests check preference direction/strength and
-the scaled-BT equation. `python tests/smoke.py` runs the same trainer on a tiny
-random Llama and toy pairs, with outputs in a fresh temporary directory.
-
-See [VERIFICATION.md](VERIFICATION.md) for exactly what has been verified.
